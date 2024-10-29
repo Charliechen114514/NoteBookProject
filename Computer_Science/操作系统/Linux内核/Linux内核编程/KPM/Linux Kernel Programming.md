@@ -361,4 +361,55 @@ scripts/config --disable SYSTEM_REVOCATION_KEYS
 - 符号地址映射文件 System.map
 - 压缩的可启动内核映像文件 bzImage
 
-前两个可以在我们的源码路径下找到，那下一个呢？
+以及我们可以使用make kernelrelease kernelversion image_name指令看看我们生成了啥.
+
+![image-20241029203339682](./Linux Kernel Programming/image-20241029203339682.png)
+
+​	前两个可以在我们的源码路径下找到，那下一个呢？答案是：在这里：
+
+![image-20241029203842356](./Linux Kernel Programming/image-20241029203842356.png)
+
+​	13M！非常的小！下一步，我们来下载我们的内核。
+
+## 下载我们的模块
+
+​	我们没完是，还有很多内核模块没有安装呢！所以我们
+
+![image-20241029204150643](./Linux Kernel Programming/image-20241029204150643.png)
+
+​	我们这个操作将会把模块下载到默认的位置上。比起来，你现在可以去看看/lib/modules下面的名堂！
+
+![image-20241029204336543](./Linux Kernel Programming/image-20241029204336543.png)
+
+​	现在我们需要做的，就是把initramfs和bootloader给建立起来！
+
+## 生成initramfs和bootloader
+
+​	想要使用新的内核，一般的经典步骤就是：
+
+- 生成initramfs镜像
+- 生成一份GRUB引导告知使用新内核
+
+​	在ubuntu上那就是一句话就搞定！
+
+```
+sudo make install
+```
+
+## 制定我们的GRUB
+
+​	我们的下一步就是制定Grub Loader。现代的Ubuntu下的GRUB会自动使用最新的内核。嗯，好像不太客制化（这里狂喜Arch），所以我们需要小小的编辑一下我们的GRUB。
+
+​	第一步就是备份一下我们的GRUB。
+
+![image-20241029205216285](./Linux Kernel Programming/image-20241029205216285.png)
+
+​	当然中间出了一点小小的输入失误，我们已经备份了一个grub引导文件了。下一步，我们编辑（笔者喜欢用vim）一下grub文件。
+
+![image-20241029210659850](./Linux Kernel Programming/image-20241029210659850.png)
+
+​	修改成这样之后，我们可以更新一下grub了。
+
+![image-20241029211022002](./Linux Kernel Programming/image-20241029211022002.png)
+
+​	现在，我们重启
