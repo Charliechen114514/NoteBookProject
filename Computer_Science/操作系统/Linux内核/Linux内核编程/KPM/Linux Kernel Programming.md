@@ -412,4 +412,8 @@ sudo make install
 
 ![image-20241029211022002](./Linux Kernel Programming/image-20241029211022002.png)
 
-​	现在，我们重启
+​	现在，我们重启就能选择内核得到最新的结果了：请选择Advance
+
+![grub1](./Linux Kernel Programming/grub1.png)
+
+![grub2](./Linux Kernel Programming/grub2.png)
