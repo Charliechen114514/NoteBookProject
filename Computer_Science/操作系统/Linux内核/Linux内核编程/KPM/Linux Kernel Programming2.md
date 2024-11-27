@@ -115,3 +115,492 @@ ls /lib/modules/5.19.0-45-generic/kernel/
 ​	最重要的是，内核模块已成为构建和分发某些类型的内核组件的实用方法，其中设备驱动程序可能是它们最常见的用例。其他用途包括但不限于文件系统、网络防火墙、数据包嗅探器和自定义内核代码。
 
 ## 动手！写年轻人的第一个内核模块程序
+
+### 先试试看！
+
+​	下面我们就开始动手写内核了！先不要着急问步骤，您可以先看看下面的代码
+
+```
+#include<linux/init.h>
+#include<linux/module.h>
+
+MODULE_AUTHOR("Charliechen");
+MODULE_DESCRIPTION("This is a module print hello world for u!");
+MODULE_LICENSE("Dual MIT/GPL");
+MODULE_VERSION("0.1");
+
+/* modified for print times */
+static const short PRT_TIMES = 10;
+
+static void print_me(void)
+{
+    for(short i = 0; i < PRT_TIMES; i++)
+        pr_info("Hello, world!");
+}
+
+
+static int __init hello_init(void)
+{
+    pr_info("The module is about hanging on the kernel:)\n");
+    print_me();
+    return 0;
+}
+
+static void __exit hello_exit(void)
+{
+    pr_info("Then the kernel is about to leave!");
+}
+
+
+module_init(hello_init);
+module_exit(hello_exit);
+```
+
+​	我先不写注释，以保留您的一点好奇心（不是。
+
+​	当然，你也可以复制代码到hello_lkm.c中体验一番。
+
+> 下一步就是写一个Makefile！
+
+​	当然，你可能会发颤，欸！我写内核Makefile，真的假的？你放心，你做的工作实际上是调用内核写的markfile来完成这项工作！
+
+```
+# A makefile sheet for compiling the kernel
+
+PWD 	:= $(shell pwd)
+KDIR 	:= /lib/modules/$(shell uname -r)/build/
+obj-m 	+= hello_lkm.o
+
+all:
+	make -C $(KDIR) M=$(PWD) modules
+clean:
+	make -C $(KDIR) M=$(PWD) clean
+```
+
+​	之后就是Make，笔者make一下：
+
+```
+[Charliechen@ArchLinux chap4]$ cd try1/
+[Charliechen@ArchLinux try1]$ make
+make -C /lib/modules/6.11.7-arch1-1/build/ M=/home/Charliechen/Works/module_programming/chap4/try1 modules
+make[1]: Entering directory '/usr/lib/modules/6.11.7-arch1-1/build'
+  CC [M]  /home/Charliechen/Works/module_programming/chap4/try1/hello_lkm.o
+  MODPOST /home/Charliechen/Works/module_programming/chap4/try1/Module.symvers
+  CC [M]  /home/Charliechen/Works/module_programming/chap4/try1/hello_lkm.mod.o
+  LD [M]  /home/Charliechen/Works/module_programming/chap4/try1/hello_lkm.ko
+  BTF [M] /home/Charliechen/Works/module_programming/chap4/try1/hello_lkm.ko
+make[1]: Leaving directory '/usr/lib/modules/6.11.7-arch1-1/build'
+```
+
+​	事情就是这样的简单，当然，路径问题对着查就行。
+
+​	下一步就是挂起我们的module试试看：
+
+```
+sudo insmod hello_lkm.ko
+```
+
+​	你可以看到，我们的模块挂起来了，啥反应没有！在哪里看现象呢？答案是dmesg！
+
+```
+sudo dmesg | tail -13
+```
+
+```
+[ 5187.941248] The module is about hanging on the kernel:)
+[ 5187.941253] Hello, world!
+[ 5187.941254] Hello, world!
+[ 5187.941254] Hello, world!
+[ 5187.941255] Hello, world!
+[ 5187.941256] Hello, world!
+[ 5187.941256] Hello, world!
+[ 5187.941257] Hello, world!
+[ 5187.941257] Hello, world!
+[ 5187.941258] Hello, world!
+```
+
+​	我们可以看看我们挂起的内核模块的信息：
+
+```
+sudo modinfo hello_lkm.ko
+```
+
+```
+filename:       /home/Charliechen/Works/module_programming/chap4/try1/hello_lkm.ko
+version:        0.1
+license:        Dual MIT/GPL
+description:    This is a module print hello world for u!
+author:         Charliechen
+srcversion:     E85791CF389F9691386FD90
+depends:        
+retpoline:      Y
+name:           hello_lkm
+vermagic:       6.11.7-arch1-1 SMP preempt mod_unload 
+```
+
+​	以及卸载我们的module
+
+```
+sudo rmmod hello_lkm.ko
+```
+
+​	笔者的电脑上不会打印信息，直到下一次我们挂起模块的时候才会打印退出的信息，你试试看！
+
+### 开始我们的详解旅程
+
+#### Kernel Headers
+
+​	无论您是何种发行版，基本上可以确定的是，您的模块开发头文件基本上都在`/lib/modules/$(shell uname -r)`下，以笔者为例子：
+
+```
+[Charliechen@ArchLinux try1]$ cd /lib/modules/$(uname -r)/
+[Charliechen@ArchLinux 6.11.7-arch1-1]$ ls -l
+total 20264
+drwxr-xr-x 1 root root      442 Nov 13 15:27 build
+drwxr-xr-x 1 root root       92 Nov 13 15:27 kernel
+-rw-r--r-- 1 root root  1640809 Nov 13 15:27 modules.alias
+-rw-r--r-- 1 root root  1601568 Nov 13 15:27 modules.alias.bin
+-rw-r--r-- 1 root root     6853 Nov  9 01:57 modules.builtin
+-rw-r--r-- 1 root root     7995 Nov 13 15:27 modules.builtin.alias.bin
+-rw-r--r-- 1 root root     9013 Nov 13 15:27 modules.builtin.bin
+-rw-r--r-- 1 root root    70149 Nov  9 01:57 modules.builtin.modinfo
+-rw-r--r-- 1 root root   857294 Nov 13 15:27 modules.dep
+-rw-r--r-- 1 root root  1124303 Nov 13 15:27 modules.dep.bin
+-rw-r--r-- 1 root root      437 Nov 13 15:27 modules.devname
+-rw-r--r-- 1 root root   251482 Nov  9 01:57 modules.order
+-rw-r--r-- 1 root root     2870 Nov 13 15:27 modules.softdep
+-rw-r--r-- 1 root root   749296 Nov 13 15:27 modules.symbols
+-rw-r--r-- 1 root root   909081 Nov 13 15:27 modules.symbols.bin
+-rw-r--r-- 1 root root       55 Nov 13 15:27 modules.weakdep
+-rw-r--r-- 1 root root        6 Nov  9 01:57 pkgbase
+drwxr-xr-x 1 root root        8 Nov 13 15:27 updates
+-rw-r--r-- 1 root root 13480448 Nov  9 01:57 vmlinuz
+```
+
+​	以及我们的build底下就是我们的开发文件：
+
+```
+[Charliechen@ArchLinux 6.11.7-arch1-1]$ ls build/
+arch     Kconfig                  net         version
+block    kernel                   samples     virt
+certs    lib                      scripts     vmlinux
+crypto   localversion.10-pkgrel   security    vmlinux-gdb.py
+drivers  localversion.20-pkgname  sound       vmlinux.h
+fs       Makefile                 System.map
+include  mm                       tools
+init     Module.symvers           usr
+```
+
+​	现在我们应该猜到：
+
+```
+#include<linux/init.h>
+#include<linux/module.h>
+```
+
+​	实际上引用的就是这两个文件了！
+
+#### 小插曲：在VSCode上配置你的开发环境
+
+​	哦对了，这里简单介绍一下如何在VSCode上配置开发环境！一般而言，如果您可以在shell编译您的module，但是在VSCode中则缺失相关信息，办法是在.vscode下写一个c_cpp_properties.json文件，这里笔者给出我的配置：
+
+```
+{
+    "configurations": [
+        {
+            "name": "kernel_dev",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/lib/modules/6.11.7-arch1-1/build/include",
+                "/lib/modules/6.11.7-arch1-1/build/arch/x86/include",
+                "/lib/modules/6.11.7-arch1-1/build/arch/x86/include/generated",
+                "/lib/modules/6.11.7-arch1-1/build/include",
+                "/lib/modules/6.11.7-arch1-1/build/arch/x86/include/uapi",
+                "/lib/modules/6.11.7-arch1-1/build/arch/x86/include/generated/uapi",
+                "/lib/modules/6.11.7-arch1-1/build/include/uapi",
+                "/lib/modules/6.11.7-arch1-1/build/include/generated/uapi"
+            ],
+            "defines": [                
+                "__GNUC__",
+                "__KERNEL__",
+                "MODULE"
+            ],
+            "intelliSenseMode": "clang-x64"
+        }
+    ],
+    "version": 4
+}
+```
+
+​	includePath中添加您现在使用的内核的版本的头文件，注意到默认的define需要添加defines的
+
+```
+"__GNUC__",
+"__KERNEL__",
+"MODULE"
+```
+
+​	这几个宏将会使能我们内核开发的功能，所以，just do it!
+
+#### 一些模块开发的宏介绍
+
+​	在Linux内核模块（LKM，Loadable Kernel Module）中，`MODULE_*` 宏用于定义与模块相关的元数据。每个宏都有特定的用途：
+
+**`MODULE_AUTHOR()`**： 这个宏用于指定内核模块的作者或作者列表。它接受一个字符串参数，该字符串通常是作者的姓名、电子邮件地址或者其他识别信息。这个宏是为了提供作者信息，便于其他开发者或用户在需要时联系作者。
+
+**`MODULE_DESCRIPTION()`**： 该宏用来简短地描述内核模块的功能或用途。描述通常是简洁且明确的，旨在向用户或其他开发者解释模块的基本作用。这个描述会显示在使用 `lsmod` 或 `modinfo` 命令时。
+示例：
+
+```
+MODULE_DESCRIPTION("This module provides a simple device driver for example hardware.");
+```
+
+这段描述说明该模块是一个简单的设备驱动程序，适用于某个示例硬件。
+
+**`MODULE_LICENSE()`**： 该宏指定了内核模块的许可证类型，告诉系统该模块的使用和分发条款。不同的许可证可能会影响模块的合法性，尤其是在与内核的兼容性方面。常见的许可证包括GPL（GNU General Public License）、MIT、BSD等。
+
+- `MODULE_LICENSE("GPL")` 适用于遵循 GPL 许可证的模块。
+- `MODULE_LICENSE("Proprietary")` 用于专有软件许可证的模块。
+- 如果没有指定许可证，Linux内核会认为模块不符合GPL，因此会发出警告。
+  示例：
+
+```
+MODULE_LICENSE("GPL");
+```
+
+这意味着该模块遵循GPL许可证。
+
+**`MODULE_VERSION()`**： 该宏用于指定模块的版本信息。它接受一个字符串参数，通常用于记录模块的版本号。这对于模块的维护、调试、版本控制等非常有用。
+示例：
+
+```
+MODULE_VERSION("1.0.0");
+```
+
+这指定了该内核模块的版本号为1.0.0。
+
+​	好吧，来一个省流的版本：
+
+- `MODULE_AUTHOR()` 记录了作者信息。
+- `MODULE_DESCRIPTION()` 说明了模块的功能。
+- `MODULE_LICENSE()` 明确了该模块遵循GPL许可证。
+- `MODULE_VERSION()` 指定了该模块的版本号。
+
+#### entry和exit点（欸！这不是我们构造和析构吗，下此记得标明出处）
+
+​	内核模块不像普通的应用程序，它们是运行在内核空间的代码，拥有内核权限。因此，内核模块没有像应用程序那样的入口点（如 `main()` 函数）。这就引出了一个问题：内核模块的入口点和退出点在哪里？
+
+​	内核模块的入口和退出点由两个宏 `module_init()` 和 `module_exit()` 指定。在模块加载时，`module_init()` 宏会调用传入的函数，这个函数就是模块的入口点；而在模块卸载时，`module_exit()` 宏会调用另一个函数，这个函数则是模块的退出点。在现代的 C 编译器中，我们可以直接指定函数名作为参数，简化了代码的编写。举例来说，`helloworld_lkm_init()` 是模块的初始化函数，即模块加载时执行的入口函数，而 `helloworld_lkm_exit()` 则是模块的退出函数，也就是在模块卸载时执行的清理操作。
+
+​	虽然从概念上看，这些入口和退出函数类似于构造函数和析构函数的配对（例如在 C++ 中的类构造与析构），但实际上它们并不是在面向对象编程框架下的构造和析构函数。它们更像是内核模块的生命周期管理函数，负责在模块加载时进行必要的初始化工作，在模块卸载时清理资源。
+
+​	通过这两个宏，内核模块的加载和卸载变得更加清晰和有序，确保了在内核模块的生命周期内，正确的操作得以执行，避免资源泄漏或错误的操作。这种设计帮助开发者简化了内核模块的生命周期管理，同时也使得模块与内核系统之间的交互更加规范化。
+
+​	你已经注意到这个规范了：
+
+```
+static int  __init <modulename>_init(void); 
+static void __exit <modulename>_exit(void);
+```
+
+​	作为良好的编码习惯，我们使用函数的命名格式为 `<modulename>_{init|exit}()`，其中 `<modulename>` 被替换为内核模块的名称。
+
+​	好吧，其实这并不是强迫的，但是这样的书写非常有助于我们开发人员深入理解哪里是模块的入口点哪里是出口点！
+
+​	这里用静态限定符标记这两个函数意味着它们是这个内核模块的私有函数。这就是我们想要的。
+
+#### 0/-E 返回约定
+
+​	内核模块的 init 函数返回一个整数，即 int 类型的值；这是一个关键方面。 Linux 内核已经发展出一种风格或惯例，如果你愿意的话，关于从它返回值（意味着从模块驻留和运行的内核空间到用户空间进程）。为了返回一个值，LKM 框架遵循俗称的 0/-E 惯例：
+
+- 成功时，返回整数值 0。
+- 失败时，返回您希望将用户空间全局未初始化整数 errno 设置为的值的负数。
+
+​	请注意，errno 是一个全局整数，位于用户进程 VAS 的未初始化数据段内。除了极少数例外，每当 Linux 系统调用失败时，都会返回 -1，并将 errno 设置为正值，表示失败代码或诊断；这项工作由 glibc 在系统调用返回路径上的“粘合”代码执行。此外，errno 值是英文错误消息全局表（const char * sys_errlist[]）的索引；这就是 perror(3)、strerror[_r](3) 等例程打印出故障诊断的方式。顺便说一句，您可以从这些（内核源代码树）头文件中查找可用的错误（errno）代码的完整列表：include/uapi/asm-generic/errno-base.h 和 include/uapi/asm-generic/errno.h。
+
+​	一个关于如何从内核模块的 init 函数返回的简单示例将有助于明确这一关键点：假设我们的内核模块的 init 函数正在尝试动态分配一些内核内存（当然，后面的章节将介绍 kmalloc() API 等的详细信息；请暂时忽略它）。然后，我们可以像这样编码：
+
+```
+[...]
+ptr = kmalloc(87, GFP_KERNEL);
+if (!ptr) {
+pr_warning("%s():%s():%d: kmalloc failed! Out of memory\n", _
+return -ENOMEM;
+}
+[...]
+return 0; /* success */
+```
+
+​	如果内存分配确实失败（实不相瞒，笔者除了自己作死写大申请以外，极少遇到内存不足的case），我们会执行以下操作：
+1. 首先，我们发出警告含义的 printk。在这种特殊情况下——“内存不足”——发出消息被认为是迂腐且不必要的。如果内核空间内存分配失败，内核肯定会发出足够的诊断信息！
+2. 返回整数值 -ENOMEM：
+  在用户空间中，此值将返回到的层实际上是 glibc；它有一些“粘合”代码，将此值乘以 -1，并将全局整数 errno 设置为它。
+  现在，[f]init_module() 系统调用将返回 -1，表示失败（这是因为 insmod 实际上调用了 finit_module()（或者更早的 init_module()）系统调用，您很快就会看到）。errno 将设置为 ENOMEM，反映出由于分配内存失败而导致内核模块插入失败的事实。相反，框架期望 init 函数在成功时返回值 0。事实上，在较旧的内核版本中，如果成功后未能返回 0，则会导致内核模块突然立即从内核内存中卸载。**如今，这种内核模块的删除不会发生；相反，内核会发出一条警告消息，说明已返回可疑的非零值。此外，现代编译器通常会在以下情况下捕捉到您没有返回值的事实**，随后会触发类似这样的错误消息：
+
+  ```
+  错误：函数中没有返回语句，返回非 void [-Werror=return-type]。 
+  ```
+
+  ​	清理例程没什么好说的。它不接收任何参数，也不返回任何内容（void）。**它的工作是在内核模块从内核内存中卸载之前执行任何和所有必需的清理（释放内存对象、设置某些寄存器等等，具体取决于模块的设计用途）。** 如果内核模块中不包含 module_exit() 宏，则无法卸载它（当然，即使系统关闭或重新启动）。 
+
+  #### ERR_PTR 和 PTR_ERR 宏 
+
+  在讨论返回值时，您现在明白内核 模块的 init 例程必须返回一个整数。如果您希望返回一个 指针，该怎么办？ERR_PTR() 内联函数可以帮到我们， 它允许我们通过将其类型转换为 void * 来返回伪装成指针的整数。 情况会变得更好：您可以使用 IS_ERR() 内联函数检查错误 （它实际上只是确定值是否在 [-1 到 -4095] 范围内）， 通过 ERR_PTR() 内联将负错误值编码为指针函数，并使用逆例程 PTR_ERR() 从指针中检索该值。
+
+  ​	作为一个简单的例子，请参见此处给出的被调用者代码。这次，作为示例，我们让（示例）函数 myfunc() 返回一个指针（指向名为 mystruct 的结构）而不是一个整数：
+
+  ```
+  struct mystruct * myfunc(void)
+  {
+  	struct mystruct *mys = NULL;
+  	mys = kzalloc(sizeof(struct mystruct), GFP_KERNEL);
+  	if (!mys)
+  		return ERR_PTR(-ENOMEM);
+  	[...]
+  	return mys;
+  }
+  ```
+
+  调用者代码如下：
+
+  ```
+  [...]
+  retp = myfunc();
+  if (IS_ERR(retp)) {
+  	pr_warn("myfunc() mystruct alloc failed, aborting...\n");
+  	stat = PTR_ERR(retp); /* 将“stat”设置为值 -ENOME
+  	goto out_fail_1;
+  }
+  [...]
+  out_fail_1:
+  return stat;
+  }
+  ```
+
+  ​	当然 ERR_PTR()、PTR_ERR() 和 IS_ERR() 函数都位于（内核头）include/linux/err.h 文件中。感兴趣的空语看看。
+
+#### \_\_init 和 __exit 关键字
+
+回想一下我们简单模块的 init 和清理函数：
+
+```
+static int __init helloworld_lkm_init(void)
+{
+[ … ]
+static void __exit helloworld_lkm_exit(void)
+{
+[ … ]
+```
+
+​	我们在前面的函数签名中看到的 __init 和 __exit 宏到底是什么？它们只是指定了内存优化链接器属性。\_\_init 宏为代码定义了一个 init.text 部分。同样，任何使用 \_\_initdata 属性声明的数据都会进入 init.data 部分。
+​	这里的重点是 init 函数中的代码和数据在初始化期间只使用一次。一旦调用它，它就不会再被调用；因此，一旦调用，这些 init 部分中的所有代码和数据都会被释放（通过 free_initmem()）。
+​	__exit 宏的处理方式类似，不过当然，这只对内核模块有意义。一旦调用清理函数，所有内存都会被释放。如果代码是静态内核映像的一部分（或者如果禁用了模块支持），则此宏将不起作用。很好，但到目前为止，我们还没有解释一些实际问题：您究竟如何构建新的内核模块，将其放入内核内存并执行，然后卸载它
+
+## 扩展
+
+### MODULE_*的源文件
+
+```
+/*
+ * The following license idents are currently accepted as indicating free
+ * software modules
+ *
+ *	"GPL"				[GNU Public License v2]
+ *	"GPL v2"			[GNU Public License v2]
+ *	"GPL and additional rights"	[GNU Public License v2 rights and more]
+ *	"Dual BSD/GPL"			[GNU Public License v2
+ *					 or BSD license choice]
+ *	"Dual MIT/GPL"			[GNU Public License v2
+ *					 or MIT license choice]
+ *	"Dual MPL/GPL"			[GNU Public License v2
+ *					 or Mozilla license choice]
+ *
+ * The following other idents are available
+ *
+ *	"Proprietary"			[Non free products]
+ *
+ * Both "GPL v2" and "GPL" (the latter also in dual licensed strings) are
+ * merely stating that the module is licensed under the GPL v2, but are not
+ * telling whether "GPL v2 only" or "GPL v2 or later". The reason why there
+ * are two variants is a historic and failed attempt to convey more
+ * information in the MODULE_LICENSE string. For module loading the
+ * "only/or later" distinction is completely irrelevant and does neither
+ * replace the proper license identifiers in the corresponding source file
+ * nor amends them in any way. The sole purpose is to make the
+ * 'Proprietary' flagging work and to refuse to bind symbols which are
+ * exported with EXPORT_SYMBOL_GPL when a non free module is loaded.
+ *
+ * In the same way "BSD" is not a clear license information. It merely
+ * states, that the module is licensed under one of the compatible BSD
+ * license variants. The detailed and correct license information is again
+ * to be found in the corresponding source files.
+ *
+ * There are dual licensed components, but when running with Linux it is the
+ * GPL that is relevant so this is a non issue. Similarly LGPL linked with GPL
+ * is a GPL combined work.
+ *
+ * This exists for several reasons
+ * 1.	So modinfo can show license info for users wanting to vet their setup
+ *	is free
+ * 2.	So the community can ignore bug reports including proprietary modules
+ * 3.	So vendors can do likewise based on their own policies
+ */
+#define MODULE_LICENSE(_license) MODULE_FILE MODULE_INFO(license, _license)
+
+/*
+ * Author(s), use "Name <email>" or just "Name", for multiple
+ * authors use multiple MODULE_AUTHOR() statements/lines.
+ */
+#define MODULE_AUTHOR(_author) MODULE_INFO(author, _author)
+
+/* What your module does. */
+#define MODULE_DESCRIPTION(_description) MODULE_INFO(description, _description)
+
+#ifdef MODULE
+/* Creates an alias so file2alias.c can find device table. */
+#define MODULE_DEVICE_TABLE(type, name)					\
+extern typeof(name) __mod_##type##__##name##_device_table		\
+  __attribute__ ((unused, alias(__stringify(name))))
+#else  /* !MODULE */
+#define MODULE_DEVICE_TABLE(type, name)
+#endif
+
+/* Version of form [<epoch>:]<version>[-<extra-version>].
+ * Or for CVS/RCS ID version, everything but the number is stripped.
+ * <epoch>: A (small) unsigned integer which allows you to start versions
+ * anew. If not mentioned, it's zero.  eg. "2:1.0" is after
+ * "1:2.0".
+
+ * <version>: The <version> may contain only alphanumerics and the
+ * character `.'.  Ordered by numeric sort for numeric parts,
+ * ascii sort for ascii parts (as per RPM or DEB algorithm).
+
+ * <extraversion>: Like <version>, but inserted for local
+ * customizations, eg "rh3" or "rusty1".
+
+ * Using this automatically adds a checksum of the .c files and the
+ * local headers in "srcversion".
+ */
+
+#if defined(MODULE) || !defined(CONFIG_SYSFS)
+#define MODULE_VERSION(_version) MODULE_INFO(version, _version)
+#else
+#define MODULE_VERSION(_version)					\
+	MODULE_INFO(version, _version);					\
+	static struct module_version_attribute __modver_attr		\
+		__used __section("__modver")				\
+		__aligned(__alignof__(struct module_version_attribute)) \
+		= {							\
+			.mattr	= {					\
+				.attr	= {				\
+					.name	= "version",		\
+					.mode	= S_IRUGO,		\
+				},					\
+				.show	= __modver_version_show,	\
+			},						\
+			.module_name	= KBUILD_MODNAME,		\
+			.version	= _version,			\
+		}
+#endif
+```
+
